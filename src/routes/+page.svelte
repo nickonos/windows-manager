@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import {open} from "@tauri-apps/plugin-dialog"
 
   let name = $state("");
   let greetMsg = $state("");
@@ -8,6 +9,21 @@
     event.preventDefault();
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     greetMsg = await invoke("greet", { name });
+  }
+
+  async function is_registered(event: Event) {
+    event.preventDefault();
+
+    console.log(await invoke("add_shortcut"))
+  }
+
+  async function openFile(){
+    const file = await open({
+      multiple: false,
+      directory: false,
+    })
+
+    console.log(file)
   }
 </script>
 
@@ -27,10 +43,11 @@
   </div>
   <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
 
-  <form class="row" onsubmit={greet}>
+  <form class="row" onsubmit={is_registered}>
     <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
     <button type="submit">Greet</button>
   </form>
+  <button type="button" onclick={openFile}>Select file</button>
   <p>{greetMsg}</p>
 </main>
 
