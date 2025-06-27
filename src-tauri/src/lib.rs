@@ -1,14 +1,28 @@
 use std::{
-    fmt::{self},
-    fs, io,
-    path::{Path, PathBuf},
-    sync::Arc,
+    any::Any, collections::HashMap, fmt::{self}, fs, io, path::{Path, PathBuf}, str::FromStr, sync::Arc
 };
 
-use serde_json::json;
-use tauri::Wry;
+use serde::de::DeserializeOwned;
+use serde_json::{json};
+use tauri::{Wry};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_store::{Store, StoreExt};
+
+const SETTINGS_FILE: &str = "settings.json";
+const START_MENU_PATH: &str = "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs";
+type CommandsValue = HashMap<String, String>;
+
+enum StoreKey {
+    Commands,
+}
+
+impl StoreKey {
+    fn as_str(&self) -> &'static str {
+        match self {
+            StoreKey::Commands => "commands"
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -18,6 +32,7 @@ enum Error {
     Tauri(#[from] tauri::Error),
     TauriStore(#[from] tauri_plugin_store::Error),
     TauriOpener(#[from] tauri_plugin_opener::Error),
+    SerdeJson(#[from] serde_json::Error)
 }
 
 // we must manually implement serde::Serialize
@@ -36,30 +51,60 @@ impl fmt::Display for Error {
     }
 }
 
-#[tauri::command(rename_all = "snake_case")]
-fn add_shortcut(app_handle: tauri::AppHandle) -> Result<(), Error> {
-    let ctrl_n_shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyB);
+fn get_store(app: &tauri::AppHandle) -> Arc<Store<Wry>> {
+    app.store(SETTINGS_FILE)
+        .expect(format!("{SETTINGS_FILE} store not found").as_str())
+}
 
-    if !app_handle.global_shortcut().is_registered(ctrl_n_shortcut) {
-        app_handle.global_shortcut().register(ctrl_n_shortcut)?;
+
+fn get_from_store<T: DeserializeOwned>(store: &Arc<Store<Wry>>, key: StoreKey) -> Result<Option<T>, serde_json::Error> {
+    let value = store.get(key.as_str());
+    if value.is_none(){
+        return Ok(None)   
+    }
+    
+    match serde_json::from_value(value.unwrap()) {
+        Ok(val) => {
+            Ok(Some(val))
+        }
+        Err(e) => {
+            Err(e)
+        }
+    }
+}
+
+fn set_store_value<T: serde::Serialize>(store: &Arc<Store<Wry>>, key: StoreKey, value: T) { 
+    store.set(key.as_str(), json![value]);
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn add_shortcut(app_handle: tauri::AppHandle, shortcut_str: String, path: String) -> Result<(), Error> {
+    let ctrl_n_shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyB);
+    let parsed_shortcut = Shortcut::from_str(&shortcut_str);
+    if parsed_shortcut.is_err() {
+        return Err(
+            Error::TauriShortcut(
+                tauri_plugin_global_shortcut::Error::from(
+                    parsed_shortcut.unwrap_err())
+                )
+            );
+    }
+
+    let shortcut = parsed_shortcut.unwrap();
+    if !app_handle.global_shortcut().is_registered(shortcut) {
+        app_handle.global_shortcut().register(shortcut)?;
     }
 
     let store = get_store(&app_handle);
-    let store_commands = store.get("commands").expect("Commands not found");
-    let mut commands: Vec<String> =
-        serde_json::from_value(store_commands).expect("Unable to parse commands");
+    let mut commands : Vec<String> = get_from_store(&store, StoreKey::Commands)?.unwrap_or_default();
     commands.push(ctrl_n_shortcut.into_string());
-    store.set("commands", json![commands]);
+    set_store_value(&store, StoreKey::Commands, commands);
 
     store.save()?;
     store.close_resource();
     Ok(())
 }
 
-fn get_store(app: &tauri::AppHandle) -> Arc<Store<Wry>> {
-    app.store("settings.json")
-        .expect("settings.json store not found")
-}
 
 fn find_all_executables(executables: &mut Vec<PathBuf>, path: &Path) -> io::Result<()> {
     if path.is_dir() {
@@ -83,10 +128,9 @@ pub fn run() {
     let mut executables: Vec<PathBuf> = Vec::new();
     find_all_executables(
         &mut executables,
-        Path::new("C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"),
+        Path::new(START_MENU_PATH),
     )
     .expect("something went wrong");
-    println!("{:?}", executables);
 
     #[cfg(desktop)]
     {
@@ -95,26 +139,25 @@ pub fn run() {
             .plugin(tauri_plugin_store::Builder::new().build())
             .plugin(tauri_plugin_opener::init())
             .setup(|app| {
-                let store = app.store("settings.json")?;
+                let store = app.store(SETTINGS_FILE)?;
 
-                if store.get("commands").is_none() {
-                    store.set("commands", json!([]));
+                let commands : Option<CommandsValue> = get_from_store(&store, StoreKey::Commands)?;
+                if commands.is_none() {
+                    set_store_value::<HashMap<String, String>>(&store, StoreKey::Commands, HashMap::new());
                 }
 
-                let store_commands = store.get("commands").expect("Commands not found");
-                let commands: Vec<String> =
-                    serde_json::from_value(store_commands).expect("Unable to parse commands");
+                let commands = commands.unwrap_or_default();
 
                 app.handle()
                     .plugin(
                         tauri_plugin_global_shortcut::Builder::new()
                             .with_handler(move |_app, shortcut, event| {
-                                println!("handle shortcut: {:?}", shortcut);
+                                let application = commands.get(&shortcut.into_string());
 
-                                if commands.contains(&shortcut.into_string()) {
+                                if application.is_some(){
                                     match event.state() {
                                         ShortcutState::Pressed => {
-                                            println!("{:?} pressed", shortcut.into_string());
+                                            println!("{:?} execute", application.unwrap());
                                         }
                                         ShortcutState::Released => {}
                                     }
