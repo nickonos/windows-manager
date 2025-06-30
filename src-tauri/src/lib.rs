@@ -3,7 +3,7 @@ use std::{
 };
 
 use serde::de::DeserializeOwned;
-use serde_json::{json};
+use serde_json::{json, Value};
 use tauri::{Wry};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_store::{Store, StoreExt};
@@ -63,7 +63,7 @@ fn get_from_store<T: DeserializeOwned>(store: &Arc<Store<Wry>>, key: StoreKey) -
         return Ok(None)   
     }
     
-    match serde_json::from_value(value.unwrap()) {
+    match serde_json::from_value(value.expect("invalid json value")) {
         Ok(val) => {
             Ok(Some(val))
         }
@@ -74,7 +74,7 @@ fn get_from_store<T: DeserializeOwned>(store: &Arc<Store<Wry>>, key: StoreKey) -
 }
 
 fn set_store_value<T: serde::Serialize>(store: &Arc<Store<Wry>>, key: StoreKey, value: T) { 
-    store.set(key.as_str(), json![value]);
+    store.set(key.as_str(), serde_json::to_value(value).expect("unable to serialize to json"));
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -139,33 +139,35 @@ pub fn run() {
             .plugin(tauri_plugin_store::Builder::new().build())
             .plugin(tauri_plugin_opener::init())
             .setup(|app| {
-                let store = app.store(SETTINGS_FILE)?;
+                use tauri::Manager;
 
+                let store = app.store(SETTINGS_FILE)?;
+                println!("{:?}", app.path().app_data_dir());
                 let commands : Option<CommandsValue> = get_from_store(&store, StoreKey::Commands)?;
                 if commands.is_none() {
-                    set_store_value::<HashMap<String, String>>(&store, StoreKey::Commands, HashMap::new());
+                    set_store_value(&store, StoreKey::Commands, HashMap::<&str, &str>::new());
                 }
 
-                let commands = commands.unwrap_or_default();
+                // let commands = commands.unwrap_or_default();
 
-                app.handle()
-                    .plugin(
-                        tauri_plugin_global_shortcut::Builder::new()
-                            .with_handler(move |_app, shortcut, event| {
-                                let application = commands.get(&shortcut.into_string());
+                // app.handle()
+                //     .plugin(
+                //         tauri_plugin_global_shortcut::Builder::new()
+                //             .with_handler(move |_app, shortcut, event| {
+                //                 let application = commands.get(&shortcut.into_string());
 
-                                if application.is_some(){
-                                    match event.state() {
-                                        ShortcutState::Pressed => {
-                                            println!("{:?} execute", application.unwrap());
-                                        }
-                                        ShortcutState::Released => {}
-                                    }
-                                }
-                            })
-                            .build(),
-                    )
-                    .expect("Unable to add handler");
+                //                 if application.is_some(){
+                //                     match event.state() {
+                //                         ShortcutState::Pressed => {
+                //                             println!("{:?} execute", application.unwrap());
+                //                         }
+                //                         ShortcutState::Released => {}
+                //                     }
+                //                 }
+                //             })
+                //             .build(),
+                //     )
+                //     .expect("Unable to add handler");
 
                 Ok(())
             })

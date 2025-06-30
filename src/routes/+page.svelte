@@ -1,4 +1,5 @@
 <script lang="ts">
+  import {Button} from "$lib/components/ui/button/index"
   import { invoke } from "@tauri-apps/api/core";
   import {open} from "@tauri-apps/plugin-dialog"
 
@@ -29,7 +30,7 @@
 
 <main class="container">
   <h1>Welcome to Tauri + Svelte</h1>
-
+  <Button>Hello</Button>
   <div class="row">
     <a href="https://vitejs.dev" target="_blank">
       <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
